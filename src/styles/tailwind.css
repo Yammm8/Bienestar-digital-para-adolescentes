@@ -2,3 +2,12 @@
 @source '../**/*.{js,ts,jsx,tsx}';
 
 @import 'tw-animate-css';
+
+/* Hide scrollbars globally — mobile app, no native scrollbar needed */
+* {
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE / Edge legacy */
+}
+*::-webkit-scrollbar {
+  display: none;               /* Chrome / Safari / WebKit */
+}
