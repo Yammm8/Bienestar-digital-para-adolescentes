@@ -1,95 +1,196 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-
-interface AuthUser {
-  name: string;
-  username: string;
-  email: string;
-}
+import { Usuario } from "../../types/database";
+import { authService } from "../../services/auth";
+import { syncPendingPostsToDb } from "../data/posts";
 
 interface AuthContextType {
-  user: AuthUser | null;
+  user: Usuario | null;
+  authUser: { email?: string; id?: string } | null;
   isLoggedIn: boolean;
   hasOnboarded: boolean;
+  isLoading: boolean;
+  error: string | null;
   completeOnboarding: () => void;
-  login: (email: string, password: string) => Promise<void>;
-  register: (name: string, username: string, email: string, password: string) => Promise<void>;
-  logout: () => void;
+  updateUserProfile: (profile: Usuario) => void;
+  login: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
+  register: (
+    nombre: string,
+    username: string,
+    email: string,
+    password: string
+  ) => Promise<{ success: boolean; message: string }>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  authUser: null,
   isLoggedIn: false,
   hasOnboarded: false,
+  isLoading: true,
+  error: null,
   completeOnboarding: () => {},
-  login: async () => {},
-  register: async () => {},
-  logout: () => {},
+  updateUserProfile: () => {},
+  login: async () => ({ success: false, message: "" }),
+  register: async () => ({ success: false, message: "" }),
+  logout: async () => {},
 });
 
-function loadJSON<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => loadJSON("auth_user", null));
-  const [hasOnboarded, setHasOnboarded] = useState<boolean>(() => loadJSON("auth_onboarded", false));
+  const [user, setUser] = useState<Usuario | null>(null);
+  const [authUser, setAuthUser] = useState<{ email?: string; id?: string } | null>(null);
+  const [hasOnboarded, setHasOnboarded] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Persist to localStorage on change
+  // Inicializar usuario al montar el componente
   useEffect(() => {
-    if (user) localStorage.setItem("auth_user", JSON.stringify(user));
-    else localStorage.removeItem("auth_user");
-  }, [user]);
+    const initializeAuth = async () => {
+      try {
+        const userData = await authService.getCurrentUser();
+          if (userData) {
+            setAuthUser(userData.auth ?? null);
+            if (userData.profile) {
+              setUser(userData.profile);
+              setHasOnboarded(userData.profile.onboarded);
+              await syncPendingPostsToDb(userData.profile.id, userData.profile.username);
+            }
+        }
+      } catch (err) {
+        console.error("Error initializing auth:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  useEffect(() => {
-    localStorage.setItem("auth_onboarded", JSON.stringify(hasOnboarded));
-  }, [hasOnboarded]);
+    initializeAuth();
 
-  const login = async (email: string, _password: string) => {
-    await new Promise((r) => setTimeout(r, 800));
-    const savedUser = loadJSON<AuthUser | null>("auth_user", null);
-    // Reuse saved profile if same email, otherwise use default
-    const resolvedUser = savedUser?.email === email
-      ? savedUser
-      : { name: "María García", username: "maria", email };
-    setUser(resolvedUser);
-    setHasOnboarded(true);
+    // Escuchar cambios de autenticación
+    const { data: subscription } = authService.onAuthStateChange(async (event, session) => {
+      console.log("Auth state changed:", event);
+
+      if (event === "SIGNED_IN" && session) {
+        const userData = await authService.getCurrentUser();
+        if (userData) {
+          setAuthUser(userData.auth ?? null);
+          if (userData.profile) {
+            setUser(userData.profile);
+            setHasOnboarded(userData.profile.onboarded);
+            await syncPendingPostsToDb(userData.profile.id, userData.profile.username);
+          }
+        }
+      } else if (event === "SIGNED_OUT") {
+        setAuthUser(null);
+        setUser(null);
+        setHasOnboarded(false);
+        localStorage.removeItem("wb_settings");
+        localStorage.removeItem("wb_communities");
+        localStorage.removeItem("wb_following");
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await authService.signin({ email, password });
+      if (response.success) {
+        setAuthUser(response.usuario ? { email, id: response.usuario.id } : null);
+      }
+      if (response.success && response.usuario) {
+        setUser(response.usuario);
+        setHasOnboarded(response.usuario.onboarded);
+      } else {
+        setError(response.error || response.message);
+      }
+      return { success: response.success, message: response.message };
+    } catch (err: any) {
+      const message = err.message || "Error en el login";
+      setError(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const register = async (name: string, username: string, email: string, _password: string) => {
-    await new Promise((r) => setTimeout(r, 800));
-    setUser({ name, username, email });
-    setHasOnboarded(false);
+  const register = async (nombre: string, username: string, email: string, password: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await authService.signup({
+        email,
+        password,
+        nombre,
+        username,
+      });
+      if (response.success) {
+        setHasOnboarded(false);
+      } else {
+        setError(response.error || response.message);
+      }
+      return { success: response.success, message: response.message };
+    } catch (err: any) {
+      const message = err.message || "Error en el registro";
+      setError(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const logout = () => {
-    setUser(null);
-    setHasOnboarded(false);
-    localStorage.removeItem("auth_user");
-    localStorage.setItem("auth_onboarded", "false");
-    // Reset wellbeing settings so next user starts fresh from onboarding
-    localStorage.removeItem("wb_settings");
-    localStorage.removeItem("wb_communities");
-    localStorage.removeItem("wb_following");
+  const logout = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await authService.signout();
+      setUser(null);
+      setHasOnboarded(false);
+      localStorage.removeItem("wb_settings");
+      localStorage.removeItem("wb_communities");
+      localStorage.removeItem("wb_following");
+    } catch (err: any) {
+      const message = err.message || "Error cerrando sesión";
+      setError(message);
+      console.error(message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const completeOnboarding = () => setHasOnboarded(true);
+  const completeOnboarding = async () => {
+    if (user) {
+      const updated = await authService.updateUser(user.id, { onboarded: true });
+      if (updated) {
+        setUser(updated);
+        setHasOnboarded(true);
+      }
+    }
+  };
 
-  return (
-    <AuthContext.Provider value={{
-      user,
-      isLoggedIn: user !== null,
-      hasOnboarded,
-      completeOnboarding,
-      login,
-      register,
-      logout,
-    }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const updateUserProfile = (profile: Usuario) => {
+    setUser(profile);
+  };
+
+  const value: AuthContextType = {
+    user,
+    authUser,
+    isLoggedIn: user !== null,
+    hasOnboarded,
+    isLoading,
+    error,
+    completeOnboarding,
+    updateUserProfile,
+    login,
+    register,
+    logout,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

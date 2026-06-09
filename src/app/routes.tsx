@@ -15,14 +15,26 @@ import { Profile } from "./components/Profile";
 import { PublicProfile } from "./components/PublicProfile";
 import { Search } from "./components/Search";
 import { SettingsAccount } from "./components/SettingsAccount";
+import { ProtectedRoute } from "./contexts/ProtectedRoute";
 
 export const router = createBrowserRouter([
   { path: "/login", Component: Login },
   { path: "/register", Component: Register },
-  { path: "/onboarding", Component: Onboarding },
+  {
+    path: "/onboarding",
+    Component: () => (
+      <ProtectedRoute>
+        <Onboarding />
+      </ProtectedRoute>
+    ),
+  },
   {
     path: "/",
-    Component: Layout,
+    Component: () => (
+      <ProtectedRoute requireOnboarded>
+        <Layout />
+      </ProtectedRoute>
+    ),
     children: [
       { index: true, Component: Feed },
       { path: "create", Component: Create },

@@ -1,35 +1,30 @@
 import { User, Settings, Edit, Heart, MessageCircle, Users, Clock, Leaf } from "lucide-react";
 import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
 import { useWellbeing } from "../contexts/WellbeingContext";
+import { useAuth } from "../contexts/AuthContext";
+import { loadPosts } from "../data/posts";
 
 export function Profile() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { todayMinutes, weeklyData, joinedCommunities, offlineTotalMinutes } = useWellbeing();
+  const [userPosts, setUserPosts] = useState(() => loadPosts().filter((post) => user ? post.username === `@${user.username}` : false));
+
+  useEffect(() => {
+    if (!user) {
+      setUserPosts([]);
+      return;
+    }
+    const posts = loadPosts().filter((post) => post.username === `@${user.username}`);
+    setUserPosts(posts);
+  }, [user]);
 
   const weeklyTotal = weeklyData.reduce((sum, d) => sum + d.minutes, 0);
   const offlineMinutes = offlineTotalMinutes;
 
   const formatMinutes = (m: number) =>
     m >= 60 ? `${Math.floor(m / 60)}h ${m % 60 > 0 ? `${m % 60}m` : ""}`.trim() : `${m}m`;
-
-  const userPosts = [
-    {
-      id: 1,
-      content: "Hoy salí a caminar sin auriculares. Escuché pájaros, conversaciones, el viento...",
-      reactions: 24,
-      comments: 8,
-      community: "Mindfulness",
-      date: "28 Abr",
-    },
-    {
-      id: 2,
-      content: "Reflexión: las mejores conversaciones suceden cuando guardamos el celular.",
-      reactions: 31,
-      comments: 12,
-      community: "Conversaciones profundas",
-      date: "25 Abr",
-    },
-  ];
 
   const communityEmojis: Record<string, string> = {
     Mindfulness: "🧘",
@@ -55,13 +50,13 @@ export function Profile() {
             <User className="w-10 h-10" />
           </div>
           <div>
-            <h2 className="text-white mb-1">María García</h2>
-            <p className="text-white/80 text-sm">@maria</p>
+            <h2 className="text-white mb-1">{user?.nombre ?? "Tu nombre"}</h2>
+            <p className="text-white/80 text-sm">{user ? `@${user.username}` : "@usuario"}</p>
           </div>
         </div>
 
         <p className="text-white/90 mb-4">
-          Explorando la vida consciente, un paso a la vez 🌱
+          {user?.bio ?? "Conecta con tu bienestar y tus comunidades"}
         </p>
 
         <div className="flex items-center gap-2">
@@ -113,29 +108,37 @@ export function Profile() {
 
         <h3 className="mb-4">Tus publicaciones</h3>
         <div className="space-y-4">
-          {userPosts.map((post) => (
-            <div key={post.id} className="bg-white rounded-2xl p-4 shadow-sm">
-              <div className="mb-3">
-                <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full mb-2">
-                  {post.community}
-                </span>
-                <p className="text-gray-800">{post.content}</p>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">{post.date}</span>
-                <div className="flex items-center gap-4 text-gray-600">
-                  <div className="flex items-center gap-1">
-                    <Heart className="w-4 h-4" />
-                    <span>{post.reactions}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <MessageCircle className="w-4 h-4" />
-                    <span>{post.comments}</span>
+          {userPosts.length === 0 ? (
+            <div className="bg-white rounded-2xl p-6 text-center text-gray-500">
+              <p>Aún no has publicado nada. Crea una publicación para compartir tus experiencias.</p>
+            </div>
+          ) : (
+            userPosts.map((post) => (
+              <div key={post.id} className="bg-white rounded-2xl p-4 shadow-sm">
+                <div className="mb-3">
+                  {post.community && (
+                    <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full mb-2">
+                      {post.community}
+                    </span>
+                  )}
+                  <p className="text-gray-800">{post.content}</p>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">{post.time}</span>
+                  <div className="flex items-center gap-4 text-gray-600">
+                    <div className="flex items-center gap-1">
+                      <Heart className="w-4 h-4" />
+                      <span>{post.initialReactions}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <MessageCircle className="w-4 h-4" />
+                      <span>{post.initialComments.length}</span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
         {joinedCommunities.length > 0 && (

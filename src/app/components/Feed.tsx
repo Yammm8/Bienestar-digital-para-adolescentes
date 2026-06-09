@@ -1,77 +1,78 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Heart, Users, Bell } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useWellbeing } from "../contexts/WellbeingContext";
 import { PostCard, PostData } from "./PostCard";
-import { Comment } from "./CommentsSheet";
-
-const BASE_COMMENTS: Comment[] = [
-  { id: 1, author: "Luca Martín", username: "@luca_m", content: "¡Totalmente de acuerdo! Me pasó algo similar.", time: "Hace 1 hora" },
-  { id: 2, author: "Sofía Herrera", username: "@sofia_h", content: "Gracias por compartir esto.", time: "Hace 30 min" },
-];
-
-const ALL_POSTS: PostData[] = [
-  {
-    id: 1,
-    author: "María García",
-    username: "@maria",
-    time: "Hace 2 horas",
-    content: "Hoy salí a caminar sin auriculares. Escuché pájaros, conversaciones, el viento. Hacía meses que no lo hacía. Recomiendo 100%.",
-    community: "Mindfulness",
-    initialReactions: 24,
-    initialComments: BASE_COMMENTS,
-  },
-  {
-    id: 2,
-    author: "Carlos Ruiz",
-    username: "@carlos_r",
-    time: "Hace 4 horas",
-    content: "Terminé mi primer libro del mes 📚 'El arte de la atención' de Thich Nhat Hanh. Me ayudó a entender por qué siempre estaba distraído.",
-    community: "Lectura consciente",
-    initialReactions: 31,
-    initialComments: [BASE_COMMENTS[0]],
-  },
-  {
-    id: 3,
-    author: "Ana Torres",
-    username: "@ana.t",
-    time: "Hace 6 horas",
-    content: "Mi grupo de estudio decidió reunirnos en persona en lugar de Zoom. Fue increíble ver expresiones reales y conectar de verdad.",
-    community: "Vida universitaria",
-    initialReactions: 18,
-    initialComments: [BASE_COMMENTS[1]],
-  },
-  {
-    id: 4,
-    author: "Luca Martín",
-    username: "@luca_m",
-    time: "Hace 9 horas",
-    content: "Apagué las notificaciones del celular durante 3 horas mientras dibujaba. Primera vez en meses que entré en ese estado de flujo completo.",
-    community: null,
-    initialReactions: 42,
-    initialComments: [],
-  },
-  {
-    id: 5,
-    author: "Sofía Herrera",
-    username: "@sofia_h",
-    time: "Ayer",
-    content: "Recordatorio amable: no necesitas publicar para que tu día haya valido la pena. 🌿",
-    community: null,
-    initialReactions: 87,
-    initialComments: BASE_COMMENTS,
-  },
-];
+import { loadPosts, sortPostsByNewest } from "../data/posts";
+import { useFeedGeneral } from "../../hooks/usePublications";
+import { publicacionesService } from "../../services/publications";
 
 export function Feed() {
   const [filterType, setFilterType] = useState<"all" | "communities">("all");
   const { joinedCommunities } = useWellbeing();
   const navigate = useNavigate();
+  const { publicaciones: serverPosts, loading } = useFeedGeneral();
+  const [visiblePosts, setVisiblePosts] = useState<PostData[]>([]);
 
-  const posts =
-    filterType === "communities"
-      ? ALL_POSTS.filter((p) => p.community && joinedCommunities.includes(p.community))
-      : ALL_POSTS;
+  // Build visible posts depending on filter: combine local + server
+  useEffect(() => {
+    const local = loadPosts();
+
+    if (filterType === "all") {
+      // show server general posts (mapped) + local general posts
+      const serverMapped = (serverPosts ?? []).map((p) => ({
+        id: p.id as any,
+        author: p.autor?.nombre ?? "",
+        username: p.autor ? `@${p.autor.username}` : "",
+        time: p.created_at ?? "",
+        content: p.contenido,
+        community: null,
+        initialReactions: p.reacciones?.length ?? 0,
+        initialComments: [],
+      }));
+      const localGeneral = local.filter((p) => !p.community);
+      setVisiblePosts([...localGeneral, ...serverMapped]);
+      return;
+    }
+
+    // communities: fetch posts from joined communities (server + local)
+    (async () => {
+      const localCommunity = local.filter((p) => p.community && joinedCommunities.includes(p.community));
+      const serverAccum: PostData[] = [];
+      await Promise.all(
+        joinedCommunities.map(async (slug) => {
+          try {
+            const res = await publicacionesService.obtenerPorComunidadPorSlug(slug);
+            res.forEach((p) =>
+              serverAccum.push({
+                id: p.id as any,
+                author: p.autor?.nombre ?? "",
+                username: p.autor ? `@${p.autor.username}` : "",
+                time: p.created_at ?? "",
+                content: p.contenido,
+                community: p.comunidad?.nombre ?? slug,
+                initialReactions: p.reacciones?.length ?? 0,
+                initialComments: [],
+              })
+            );
+          } catch (err) {
+            console.warn("Error cargando comunidad:", slug, err);
+          }
+        })
+      );
+
+      // merge, dedupe by id
+      const merged = [...localCommunity, ...serverAccum];
+      const seen = new Set<string | number>();
+      const dedup = merged.filter((m) => {
+        if (seen.has(String(m.id))) return false;
+        seen.add(String(m.id));
+        return true;
+      });
+      setVisiblePosts(dedup);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterType, serverPosts, joinedCommunities]);
 
   return (
     <div className="min-h-full max-w-md mx-auto">
@@ -108,12 +109,29 @@ export function Feed() {
         </div>
       </div>
 
-      {posts.length === 0 ? (
+      <div className="px-4 py-4">
+        <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 mb-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm text-emerald-700 font-medium">Comparte algo auténtico hoy.</p>
+              <p className="text-xs text-emerald-600">Tu voz hace que la feed se sienta real.</p>
+            </div>
+            <button
+              onClick={() => navigate("/create")}
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white hover:bg-emerald-700 transition-colors"
+            >
+              Crear publicación
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {visiblePosts.length === 0 ? (
         <EmptyState filterType={filterType} onExplore={() => navigate("/communities")} />
       ) : (
         <>
           <div className="divide-y divide-gray-100">
-            {posts.map((post) => (
+            {visiblePosts.map((post) => (
               <PostCard key={post.id} post={post} showCommunityTag />
             ))}
           </div>

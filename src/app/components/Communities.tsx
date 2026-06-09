@@ -1,25 +1,30 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Users, TrendingUp, MessageCircle, Search, Compass, Plus, X, Check } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useWellbeing } from "../contexts/WellbeingContext";
+import { useAuth } from "../contexts/AuthContext";
+import { useCommunities, useSearchCommunities } from "../../hooks/useCommunities";
+import { comunidadesService } from "../../services/communities";
 
 interface CommunityData {
+  id?: string;
+  slug: string;
   name: string;
-  members: number;
-  active: number;
   description: string;
   color: string;
+  members: number;
+  active: number;
   newPosts: number;
   custom?: boolean;
 }
 
 const SEED_COMMUNITIES: CommunityData[] = [
-  { name: "Mindfulness",             members: 234, active: 45, description: "Prácticas de atención plena y vida consciente", color: "emerald", newPosts: 8  },
-  { name: "Lectura consciente",      members: 189, active: 32, description: "Compartimos libros que nos transforman",        color: "blue",    newPosts: 5  },
-  { name: "Vida universitaria",      members: 312, active: 67, description: "Apoyo mutuo para estudiantes",                  color: "purple",  newPosts: 12 },
-  { name: "Creatividad",             members: 156, active: 21, description: "Arte, música y expresión auténtica",            color: "orange",  newPosts: 3  },
-  { name: "Naturaleza",              members: 201, active: 38, description: "Conexión con el mundo natural",                 color: "green",   newPosts: 6  },
-  { name: "Conversaciones profundas",members:  98, active: 14, description: "Temas que importan, sin ruido",                color: "teal",    newPosts: 2  },
+  { slug: "mindfulness", name: "Mindfulness",             members: 234, active: 45, description: "Prácticas de atención plena y vida consciente", color: "emerald", newPosts: 8  },
+  { slug: "lectura-consciente", name: "Lectura consciente",      members: 189, active: 32, description: "Compartimos libros que nos transforman",        color: "blue",    newPosts: 5  },
+  { slug: "vida-universitaria", name: "Vida universitaria",      members: 312, active: 67, description: "Apoyo mutuo para estudiantes",                  color: "purple",  newPosts: 12 },
+  { slug: "creatividad", name: "Creatividad",             members: 156, active: 21, description: "Arte, música y expresión auténtica",            color: "orange",  newPosts: 3  },
+  { slug: "naturaleza", name: "Naturaleza",              members: 201, active: 38, description: "Conexión con el mundo natural",                 color: "green",   newPosts: 6  },
+  { slug: "conversaciones-profundas", name: "Conversaciones profundas",members:  98, active: 14, description: "Temas que importan, sin ruido",                color: "teal",    newPosts: 2  },
 ];
 
 const COLOR_OPTIONS = [
@@ -50,13 +55,19 @@ const getColorClasses = (color: string) => {
 
 // ─── Create community sheet ───────────────────────────────────────────────────
 
+type CreateCommunityPayload = {
+  name: string;
+  description: string;
+  color: string;
+};
+
 function CreateCommunitySheet({
   onClose,
   onCreate,
   existingNames,
 }: {
   onClose: () => void;
-  onCreate: (c: CommunityData) => void;
+  onCreate: (payload: CreateCommunityPayload) => void;
   existingNames: string[];
 }) {
   const [name, setName] = useState("");
@@ -88,7 +99,7 @@ function CreateCommunitySheet({
 
   const handleSubmit = () => {
     if (!canCreate) return;
-    onCreate({ name: trimmedName, description: trimmedDesc, color, members: 1, active: 1, newPosts: 0, custom: true });
+    onCreate({ name: trimmedName, description: trimmedDesc, color });
   };
 
   return (
@@ -198,30 +209,112 @@ function CreateCommunitySheet({
 export function Communities() {
   const navigate = useNavigate();
   const { joinedCommunities, joinCommunity, leaveCommunity } = useWellbeing();
+  const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [customCommunities, setCustomCommunities] = useState<CommunityData[]>([]);
+  const { comunidades: serverCommunities } = useCommunities();
+  const { comunidades: searchResults, loading: loadingSearch } = useSearchCommunities(query, query.trim().length > 0);
+  const searchActive = query.trim().length > 0;
 
-  const allCommunities = [...SEED_COMMUNITIES, ...customCommunities];
+  const serverItems: CommunityData[] = serverCommunities.map((community) => ({
+    id: community.id,
+    slug: community.slug,
+    name: community.nombre,
+    description: community.descripcion,
+    color: community.color,
+    members: 0,
+    active: 0,
+    newPosts: 0,
+  }));
+
+  const fallbackItems = serverItems.length > 0 ? serverItems : SEED_COMMUNITIES;
+  const allCommunities = [...customCommunities, ...fallbackItems];
   const allNames = allCommunities.map((c) => c.name);
 
   const myCommunities = allCommunities.filter((c) => joinedCommunities.includes(c.name));
-  const filtered = allCommunities.filter(
-    (c) =>
-      !joinedCommunities.includes(c.name) &&
-      (query.trim() === "" ||
-        c.name.toLowerCase().includes(query.toLowerCase()) ||
-        c.description.toLowerCase().includes(query.toLowerCase()))
+  const discoverCommunities = query.trim()
+    ? [...customCommunities, ...searchResults.map((community) => ({
+        id: community.id,
+        slug: community.slug,
+        name: community.nombre,
+        description: community.descripcion,
+        color: community.color,
+        members: 0,
+        active: 0,
+        newPosts: 0,
+      }))]
+    : allCommunities;
+
+  const filtered = discoverCommunities.filter(
+    (c) => !joinedCommunities.includes(c.name)
   );
 
   const handleToggleMembership = (name: string) => {
     joinedCommunities.includes(name) ? leaveCommunity(name) : joinCommunity(name);
   };
 
-  const handleCreate = (community: CommunityData) => {
-    setCustomCommunities((prev) => [...prev, community]);
-    joinCommunity(community.name);
-    setShowCreate(false);
+  const slugify = (name: string) =>
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const handleCreate = async ({ name, description, color }: { name: string; description: string; color: string }) => {
+    if (!user?.id) {
+      const created: CommunityData = {
+        id: undefined,
+        slug: slugify(name),
+        name,
+        description,
+        color,
+        members: 1,
+        active: 0,
+        newPosts: 0,
+        custom: true,
+      };
+      setCustomCommunities((prev) => [created, ...prev]);
+      joinCommunity(created.name);
+      setShowCreate(false);
+      return;
+    }
+
+    const slug = slugify(name);
+    const createdCommunity = await comunidadesService.crear(name, slug, description, user.id, color);
+    if (createdCommunity) {
+      const created: CommunityData = {
+        id: createdCommunity.id,
+        slug: createdCommunity.slug,
+        name: createdCommunity.nombre,
+        description: createdCommunity.descripcion,
+        color: createdCommunity.color,
+        members: 1,
+        active: 0,
+        newPosts: 0,
+        custom: true,
+      };
+      setCustomCommunities((prev) => [created, ...prev]);
+      joinCommunity(created.name);
+      setShowCreate(false);
+      navigate(`/communities/${created.slug}`);
+    } else {
+      // Fallback local creation if DB create fails.
+      const fallback: CommunityData = {
+        id: undefined,
+        slug,
+        name,
+        description,
+        color,
+        members: 1,
+        active: 0,
+        newPosts: 0,
+        custom: true,
+      };
+      setCustomCommunities((prev) => [fallback, ...prev]);
+      joinCommunity(fallback.name);
+      setShowCreate(false);
+    }
   };
 
   return (
@@ -271,7 +364,7 @@ export function Communities() {
           ) : (
             <div className="space-y-4 mb-8">
               {myCommunities.map((community) => (
-                <div key={community.name} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div key={community.slug ?? community.name} className="bg-white rounded-2xl shadow-sm overflow-hidden">
                   <div className={`h-2 bg-gradient-to-r ${getColorClasses(community.color)}`} />
                   <div className="p-5">
                     <div className="flex items-start justify-between mb-3">
@@ -307,7 +400,7 @@ export function Communities() {
                     <div className="flex gap-2">
                       <button
                         onClick={() =>
-                          navigate(`/communities/${community.name.toLowerCase().replace(/\s+/g, "-")}`)
+                          navigate(`/communities/${community.slug ?? community.name.toLowerCase().replace(/\s+/g, "-")}`)
                         }
                         className="flex-1 bg-gray-50 text-gray-700 py-2 rounded-xl hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
                       >
@@ -330,7 +423,11 @@ export function Communities() {
           {/* Discover */}
           <h3 className="mb-4">Descubre comunidades</h3>
 
-          {filtered.length === 0 ? (
+          {searchActive && loadingSearch ? (
+            <div className="bg-gray-50 rounded-2xl p-6 text-center">
+              <p className="text-gray-500 text-sm">Buscando comunidades...</p>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="bg-gray-50 rounded-2xl p-6 text-center">
               <p className="text-gray-500 text-sm">
                 {query.trim()
@@ -349,7 +446,7 @@ export function Communities() {
           ) : (
             <div className="space-y-3">
               {filtered.map((community) => (
-                <div key={community.name} className="bg-white rounded-2xl p-4 shadow-sm">
+                <div key={community.slug ?? community.name} className="bg-white rounded-2xl p-4 shadow-sm">
                   <div className="flex items-center gap-3 mb-2">
                     <div
                       className={`w-12 h-12 bg-gradient-to-br ${getColorClasses(community.color)} rounded-full flex items-center justify-center flex-shrink-0`}

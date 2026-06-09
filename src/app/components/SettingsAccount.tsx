@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -59,14 +59,15 @@ function SectionHeader({ label, open, onToggle, icon, description }: SectionHead
 
 export function SettingsAccount() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { user, authUser, logout, isLoading: authLoading } = useAuth();
   const [openSection, setOpenSection] = useState<Section>("account");
+  const [loggingOut, setLoggingOut] = useState(false);
 
   // Account
-  const [displayName, setDisplayName] = useState("María García");
-  const [username, setUsername] = useState("maria");
-  const [bio, setBio] = useState("Explorando la vida consciente, un paso a la vez 🌱");
-  const [email, setEmail] = useState("maria@ejemplo.com");
+  const [displayName, setDisplayName] = useState(user?.nombre ?? "");
+  const [username, setUsername] = useState(user?.username ?? "");
+  const [bio, setBio] = useState(user?.bio ?? "Explorando la vida consciente, un paso a la vez 🌱");
+  const [email, setEmail] = useState(authUser?.email ?? "");
   const [editingAccount, setEditingAccount] = useState(false);
   const [savedAccount, setSavedAccount] = useState(false);
 
@@ -102,6 +103,26 @@ export function SettingsAccount() {
     setEditingAccount(false);
     setSavedAccount(true);
     setTimeout(() => setSavedAccount(false), 2000);
+  };
+
+  useEffect(() => {
+    setDisplayName(user?.nombre ?? "");
+    setUsername(user?.username ?? "");
+    setBio(user?.bio ?? "Explorando la vida consciente, un paso a la vez 🌱");
+    setEmail(authUser?.email ?? "");
+  }, [user, authUser]);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await logout();
+      navigate("/login", { replace: true });
+    } catch (err) {
+      console.error("Error en logout:", err);
+      setShowLogoutConfirm(false);
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   return (
@@ -491,7 +512,8 @@ export function SettingsAccount() {
           {!showLogoutConfirm ? (
             <button
               onClick={() => setShowLogoutConfirm(true)}
-              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50"
+              disabled={loggingOut || authLoading}
             >
               <LogOut className="w-5 h-5 text-gray-400" />
               <span className="text-gray-700">Cerrar sesión</span>
@@ -502,15 +524,24 @@ export function SettingsAccount() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowLogoutConfirm(false)}
-                  className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm hover:bg-gray-50"
+                  disabled={loggingOut}
+                  className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
-                  onClick={() => { logout(); navigate("/login"); }}
-                  className="flex-1 bg-gray-600 text-white py-2 rounded-xl text-sm hover:bg-gray-700"
+                  onClick={handleLogout}
+                  disabled={loggingOut}
+                  className="flex-1 bg-gray-600 text-white py-2 rounded-xl text-sm hover:bg-gray-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  Cerrar sesión
+                  {loggingOut ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                      Cerrando...
+                    </>
+                  ) : (
+                    "Cerrar sesión"
+                  )}
                 </button>
               </div>
             </div>

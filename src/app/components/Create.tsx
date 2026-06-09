@@ -1,6 +1,10 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { Image, Smile, MapPin, Users, Send, Globe, CheckCircle } from "lucide-react";
 import { useWellbeing } from "../contexts/WellbeingContext";
+import { useAuth } from "../contexts/AuthContext";
+import { addPost } from "../data/posts";
+import { useCreatePublicacion } from "../../hooks/usePublications";
 
 const MAX_LENGTH = 500;
 const WARN_THRESHOLD = 450;
@@ -22,6 +26,10 @@ export function Create() {
     ? "text-orange-500"
     : "text-gray-500";
 
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { crear, loading: creating } = useCreatePublicacion();
+
   const canPublish =
     content.trim().length > 0 &&
     !isOverLimit &&
@@ -29,13 +37,52 @@ export function Create() {
 
   const handlePublish = () => {
     if (!canPublish) return;
-    setPublished(true);
-    setTimeout(() => {
-      setContent("");
-      setShareLocation("general");
-      setSelectedCommunity("");
-      setPublished(false);
-    }, 2000);
+
+    const authorName = user?.nombre ?? "Tú";
+    const authorUsername = user?.username ? `@${user.username}` : "@tu_usuario";
+
+    // Primero intentar guardar en la BD si hay usuario autenticado
+    (async () => {
+      const newPost = {
+        id: Date.now(),
+        author: authorName,
+        username: authorUsername,
+        time: "Ahora",
+        content: content.trim(),
+        community: shareLocation === "community" ? selectedCommunity || null : null,
+        initialReactions: 0,
+        initialComments: [],
+        createdAt: new Date().toISOString(),
+      };
+
+      if (user?.id) {
+        const res = await crear(user.id, content.trim(), shareLocation === "community" ? selectedCommunity || undefined : undefined);
+        if (res.success && res.publicacion) {
+          console.log("Publicación guardada en BD:", res.publicacion);
+          addPost({
+            ...newPost,
+            synced: true,
+            remoteId: res.publicacion.id,
+            createdAt: res.publicacion.created_at,
+          });
+        } else {
+          console.warn("No se pudo guardar en BD, se guarda solo localmente");
+          addPost({ ...newPost, synced: false });
+        }
+      } else {
+        // Usuario no autenticado -> persistencia local
+        addPost({ ...newPost, synced: false });
+      }
+
+      setPublished(true);
+      setTimeout(() => {
+        setContent("");
+        setShareLocation("general");
+        setSelectedCommunity("");
+        setPublished(false);
+        navigate("/");
+      }, 900);
+    })();
   };
 
   return (

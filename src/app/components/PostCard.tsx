@@ -5,12 +5,15 @@ import { ReactionsPopup, ReactionId, REACTIONS } from "./ReactionsPopup";
 import type { Comment } from "./CommentsSheet";
 
 export interface PostData {
-  id: number;
+  id: string | number;
   author: string;
   username: string;
   time: string;
   content: string;
   community?: string | null;
+  createdAt?: string;
+  remoteId?: string;
+  synced?: boolean;
   initialReactions: number;
   initialComments: Comment[];
 }
@@ -21,6 +24,22 @@ interface PostCardProps {
 }
 
 const MAX_COMMENT = 300;
+
+function formatPostTime(post: PostData) {
+  if (post.createdAt) {
+    const diff = Date.now() - Date.parse(post.createdAt);
+    if (!Number.isNaN(diff) && diff >= 0) {
+      const minutes = Math.floor(diff / 60000);
+      if (minutes < 1) return "Ahora";
+      if (minutes < 60) return `Hace ${minutes} min`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `Hace ${hours} h`;
+      const days = Math.floor(hours / 24);
+      return `Hace ${days} d`;
+    }
+  }
+  return post.time;
+}
 
 export function PostCard({ post, showCommunityTag = true }: PostCardProps) {
   const navigate = useNavigate();
@@ -91,7 +110,7 @@ export function PostCard({ post, showCommunityTag = true }: PostCardProps) {
                 <span className="text-gray-400 text-xs ml-1.5">{post.username}</span>
               </button>
               <div className="flex items-center gap-2">
-                <span className="text-gray-400 text-xs">{post.time}</span>
+                <span className="text-gray-400 text-xs">{formatPostTime(post)}</span>
                 <button className="text-gray-300 hover:text-gray-500">
                   <MoreHorizontal className="w-4 h-4" />
                 </button>

@@ -7,6 +7,7 @@ import {
   ReactNode,
   CSSProperties,
 } from "react";
+import { useAuth } from "./AuthContext";
 import { Activity, pickSuggestedActivity } from "../data/activities";
 
 export interface WellbeingSettings {
@@ -150,10 +151,37 @@ const defaultContextValue: WellbeingContextType = {
 
 const WellbeingContext = createContext<WellbeingContextType>(defaultContextValue);
 
+function getStorageKey(userId: string | null, key: string) {
+  return userId ? `wb_${userId}_${key}` : `wb_${key}`;
+}
+
+function loadJSON<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    return stored ? (JSON.parse(stored) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    return stored !== null ? Number(stored) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function WellbeingProvider({ children }: { children: ReactNode }) {
+  const { user: authUser } = useAuth();
+  const userId = authUser?.id ?? null;
+
   // Usage state
-  const [todayMinutes, setTodayMinutes] = useState(47);
-  const [continuousMinutes, setContinuousMinutes] = useState(28);
+  const [todayMinutes, setTodayMinutes] = useState(0);
+  const [continuousMinutes, setContinuousMinutes] = useState(0);
   const [offlineTotalMinutes, setOfflineTotalMinutes] = useState(0);
 
   // Break state
@@ -166,25 +194,10 @@ export function WellbeingProvider({ children }: { children: ReactNode }) {
   const [atLimitDismissed, setAtLimitDismissed] = useState(false);
   const [continuousDismissed, setContinuousDismissed] = useState(false);
 
-  // Settings & social state — persisted in localStorage
-  const [settings, setSettings] = useState<WellbeingSettings>(() => {
-    try {
-      const saved = localStorage.getItem("wb_settings");
-      return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
-    } catch { return defaultSettings; }
-  });
-  const [joinedCommunities, setJoinedCommunities] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem("wb_communities");
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-  const [followingUsers, setFollowingUsers] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem("wb_following");
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  // Settings & social state — persisted in localStorage per user
+  const [settings, setSettings] = useState<WellbeingSettings>(defaultSettings);
+  const [joinedCommunities, setJoinedCommunities] = useState<string[]>([]);
+  const [followingUsers, setFollowingUsers] = useState<string[]>([]);
 
   // UC-24: suggestion state
   const [suggestionDismissed, setSuggestionDismissed] = useState(false);
@@ -194,6 +207,42 @@ export function WellbeingProvider({ children }: { children: ReactNode }) {
   const [activeOfflineActivity, setActiveOfflineActivity] = useState<ActiveOfflineActivity | null>(null);
   const [activityMinimized, setActivityMinimized] = useState(false);
   const activeOfflineRef = useRef<ActiveOfflineActivity | null>(null);
+  const [weeklyData, setWeeklyData] = useState(
+    [
+      { day: "Lun", minutes: 0 },
+      { day: "Mar", minutes: 0 },
+      { day: "Mié", minutes: 0 },
+      { day: "Jue", minutes: 0 },
+      { day: "Vie", minutes: 0 },
+      { day: "Sáb", minutes: 0 },
+      { day: "Hoy", minutes: 0 },
+    ]
+  );
+
+  // Load per-user state from localStorage
+  useEffect(() => {
+    const settingsKey = getStorageKey(userId, "settings");
+    const communitiesKey = getStorageKey(userId, "communities");
+    const followingKey = getStorageKey(userId, "following");
+    const todayKey = getStorageKey(userId, "todayMinutes");
+    const weeklyKey = getStorageKey(userId, "weeklyData");
+    const offlineKey = getStorageKey(userId, "offlineTotalMinutes");
+
+    setSettings(loadJSON(settingsKey, defaultSettings));
+    setJoinedCommunities(loadJSON<string[]>(communitiesKey, []));
+    setFollowingUsers(loadJSON<string[]>(followingKey, []));
+    setTodayMinutes(loadNumber(todayKey, 0));
+    setOfflineTotalMinutes(loadNumber(offlineKey, 0));
+    setWeeklyData(loadJSON(weeklyKey, [
+      { day: "Lun", minutes: 0 },
+      { day: "Mar", minutes: 0 },
+      { day: "Mié", minutes: 0 },
+      { day: "Jue", minutes: 0 },
+      { day: "Vie", minutes: 0 },
+      { day: "Sáb", minutes: 0 },
+      { day: "Hoy", minutes: 0 },
+    ]));
+  }, [userId]);
 
   // Keep ref in sync
   useEffect(() => {
@@ -203,16 +252,6 @@ export function WellbeingProvider({ children }: { children: ReactNode }) {
   // UC-25: return confirmation
   const [showReturnConfirm, setShowReturnConfirm] = useState(false);
   const [returnElapsedMinutes, setReturnElapsedMinutes] = useState(0);
-
-  const weeklyData = [
-    { day: "Lun", minutes: 52 },
-    { day: "Mar", minutes: 38 },
-    { day: "Mié", minutes: 41 },
-    { day: "Jue", minutes: 35 },
-    { day: "Vie", minutes: 48 },
-    { day: "Sáb", minutes: 55 },
-    { day: "Hoy", minutes: todayMinutes },
-  ];
 
   // Minute timer: usage + continuous tracking (pauses during breaks)
   useEffect(() => {
@@ -263,9 +302,24 @@ export function WellbeingProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Persist settings & social state to localStorage whenever they change
-  useEffect(() => { localStorage.setItem("wb_settings", JSON.stringify(settings)); }, [settings]);
-  useEffect(() => { localStorage.setItem("wb_communities", JSON.stringify(joinedCommunities)); }, [joinedCommunities]);
-  useEffect(() => { localStorage.setItem("wb_following", JSON.stringify(followingUsers)); }, [followingUsers]);
+  useEffect(() => {
+    localStorage.setItem(getStorageKey(userId, "settings"), JSON.stringify(settings));
+  }, [settings, userId]);
+  useEffect(() => {
+    localStorage.setItem(getStorageKey(userId, "communities"), JSON.stringify(joinedCommunities));
+  }, [joinedCommunities, userId]);
+  useEffect(() => {
+    localStorage.setItem(getStorageKey(userId, "following"), JSON.stringify(followingUsers));
+  }, [followingUsers, userId]);
+  useEffect(() => {
+    localStorage.setItem(getStorageKey(userId, "todayMinutes"), JSON.stringify(todayMinutes));
+  }, [todayMinutes, userId]);
+  useEffect(() => {
+    localStorage.setItem(getStorageKey(userId, "offlineTotalMinutes"), JSON.stringify(offlineTotalMinutes));
+  }, [offlineTotalMinutes, userId]);
+  useEffect(() => {
+    localStorage.setItem(getStorageKey(userId, "weeklyData"), JSON.stringify(weeklyData));
+  }, [weeklyData, userId]);
 
   const updateSettings = (partial: Partial<WellbeingSettings>) =>
     setSettings((prev) => ({ ...prev, ...partial }));

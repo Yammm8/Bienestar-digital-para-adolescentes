@@ -6,7 +6,7 @@ import logo from "../../imports/Bienestar_digital_logo.png";
 
 export function Login() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, isLoading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -17,18 +17,38 @@ export function Login() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || loading) return;
+    
     setLoading(true);
     setError("");
+    
     try {
-      await login(email.trim(), password);
-      navigate("/");
-    } catch {
-      setError("Correo o contraseña incorrectos. Intenta de nuevo.");
+      const result = await login(email.trim(), password);
+      
+      if (result.success) {
+        // La sesión se mantendrá automáticamente
+        navigate("/");
+      } else {
+        setError(result.message || "Correo o contraseña incorrectos. Intenta de nuevo.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Error en el login. Intenta de nuevo.");
     } finally {
       setLoading(false);
     }
   };
+
+  // Si está cargando la sesión, mostrar un loader
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-teal-50 to-blue-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-emerald-200 border-t-emerald-500 rounded-full animate-spin" />
+          <p className="text-gray-500 text-sm">Cargando...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-teal-50 to-blue-50 flex flex-col items-center justify-center px-6">
@@ -62,7 +82,8 @@ export function Login() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="tu@correo.com"
                 autoComplete="email"
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                disabled={loading}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-400"
               />
             </div>
 
@@ -78,12 +99,14 @@ export function Login() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Mín. 6 caracteres"
                   autoComplete="current-password"
-                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                  disabled={loading}
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-400"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  disabled={loading}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
                 >
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -127,3 +150,4 @@ export function Login() {
     </div>
   );
 }
+

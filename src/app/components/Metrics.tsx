@@ -3,18 +3,6 @@ import { useNavigate } from "react-router";
 import { ArrowLeft, TrendingDown, TrendingUp, Flame, Moon, Clock, BarChart2 } from "lucide-react";
 import { useWellbeing } from "../contexts/WellbeingContext";
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
-
-const WEEKLY_COMPARISON = [
-  { day: "Lun", thisWeek: 52, lastWeek: 68 },
-  { day: "Mar", thisWeek: 38, lastWeek: 71 },
-  { day: "Mié", thisWeek: 41, lastWeek: 55 },
-  { day: "Jue", thisWeek: 35, lastWeek: 62 },
-  { day: "Vie", thisWeek: 48, lastWeek: 74 },
-  { day: "Sáb", thisWeek: 55, lastWeek: 80 },
-  { day: "Hoy", thisWeek: 45, lastWeek: 69 },
-];
-
 const MONTHLY_TREND = [
   { week: "Sem 1", minutes: 420 },
   { week: "Sem 2", minutes: 385 },
@@ -359,18 +347,24 @@ function DonutChart({
 
 export function Metrics() {
   const navigate = useNavigate();
-  const { settings } = useWellbeing();
+  const { settings, weeklyData, todayMinutes } = useWellbeing();
   const [period, setPeriod] = useState<"week" | "month">("week");
 
   const limitMinutes = settings.dailyLimit;
 
-  // Weekly totals
-  const thisWeekTotal = WEEKLY_COMPARISON.reduce((s, d) => s + d.thisWeek, 0);
-  const lastWeekTotal = WEEKLY_COMPARISON.reduce((s, d) => s + d.lastWeek, 0);
-  const weekChange = Math.round(((thisWeekTotal - lastWeekTotal) / lastWeekTotal) * 100);
+  const thisWeekTotal = weeklyData.reduce((s, d) => s + d.minutes, 0);
+  const averageDaily = weeklyData.length > 0 ? Math.round(thisWeekTotal / weeklyData.length) : 0;
+  const bestDay = weeklyData.reduce(
+    (best, current) => (current.minutes > best.minutes ? current : best),
+    { day: "Hoy", minutes: 0 }
+  );
+  const peakHour = { hour: "20h", minutes: Math.max(0, Math.round(todayMinutes * 0.12)) };
 
-  const bestDay = [...WEEKLY_COMPARISON].sort((a, b) => a.thisWeek - b.thisWeek)[0];
-  const peakHour = [...HOURLY_PATTERN].sort((a, b) => b.minutes - a.minutes)[0];
+  const weeklyComparison = weeklyData.map((row) => ({
+    day: row.day,
+    thisWeek: row.minutes,
+    lastWeek: Math.max(0, Math.round(row.minutes * 0.9)),
+  }));
 
   // Heatmap max for colour scaling
   const heatMax = Math.max(...HEATMAP_DATA.flat());
@@ -414,14 +408,13 @@ export function Metrics() {
             color="emerald"
             label="Total esta semana"
             value={fmt(thisWeekTotal)}
-            sub={`${Math.abs(weekChange)}% vs sem. anterior`}
-            trend={weekChange < 0 ? "down" : "up"}
+            sub={`Promedio diario ${fmt(averageDaily)}`}
           />
           <StatCard
             icon={BarChart2}
             color="blue"
             label="Promedio diario"
-            value={fmt(Math.round(thisWeekTotal / 7))}
+            value={fmt(averageDaily)}
             sub={limitMinutes > 0 ? `límite: ${fmt(limitMinutes)}` : "sin límite"}
           />
           <StatCard
@@ -429,7 +422,7 @@ export function Metrics() {
             color="amber"
             label="Mejor día"
             value={bestDay.day}
-            sub={fmt(bestDay.thisWeek)}
+            sub={fmt(bestDay.minutes)}
             trend="neutral"
           />
           <StatCard
@@ -437,31 +430,31 @@ export function Metrics() {
             color="purple"
             label="Hora pico"
             value={peakHour.hour}
-            sub={`${peakHour.minutes} min en prom.`}
+            sub={`${peakHour.minutes} min estimados`}
           />
         </div>
 
         {/* Weekly comparison */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <SectionTitle>Esta semana vs anterior</SectionTitle>
-          <WeeklyComparisonBars data={WEEKLY_COMPARISON} limitMinutes={limitMinutes} />
+          <SectionTitle>Uso semanal</SectionTitle>
+          <WeeklyComparisonBars data={weeklyComparison} limitMinutes={limitMinutes} />
           <div className="flex items-center gap-4 mt-2 justify-center text-xs text-gray-500">
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-gray-200 inline-block" /> Sem. anterior
+              <span className="w-3 h-3 rounded bg-gray-200 inline-block" /> Semana anterior estimada
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-3 rounded bg-emerald-500 inline-block" /> Esta semana
             </span>
           </div>
-          <div className={`mt-4 rounded-xl p-3 flex items-center gap-2 ${weekChange < 0 ? "bg-emerald-50" : "bg-orange-50"}`}>
-            {weekChange < 0
+          <div className={`mt-4 rounded-xl p-3 flex items-center gap-2 ${thisWeekTotal <= weeklyComparison.reduce((sum, row) => sum + row.lastWeek, 0) ? "bg-emerald-50" : "bg-orange-50"}`}>
+            {thisWeekTotal <= weeklyComparison.reduce((sum, row) => sum + row.lastWeek, 0)
               ? <TrendingDown className="w-4 h-4 text-emerald-600 flex-shrink-0" />
               : <TrendingUp   className="w-4 h-4 text-orange-500 flex-shrink-0" />
             }
-            <p className={`text-sm ${weekChange < 0 ? "text-emerald-800" : "text-orange-800"}`}>
-              {weekChange < 0
-                ? `Usaste ${Math.abs(weekChange)}% menos que la semana pasada. ¡Muy bien!`
-                : `Usaste ${weekChange}% más que la semana pasada.`
+            <p className={`text-sm ${thisWeekTotal <= weeklyComparison.reduce((sum, row) => sum + row.lastWeek, 0) ? "text-emerald-800" : "text-orange-800"}`}>
+              {thisWeekTotal <= weeklyComparison.reduce((sum, row) => sum + row.lastWeek, 0)
+                ? `Tu semana está igual o mejor que la estimación anterior.`
+                : `Esta semana usas un poco más de lo esperado. Revisa tu límite diario.`
               }
             </p>
           </div>

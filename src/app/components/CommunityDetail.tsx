@@ -1,7 +1,10 @@
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, Users, Bell, BellOff, MoreHorizontal, PlusCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PostCard, PostData } from "./PostCard";
+import { loadPosts, sortPostsByNewest } from "../data/posts";
+import { publicacionesService } from "../../services/publications";
+import { comunidadesService } from "../../services/communities";
 import { Comment } from "./CommentsSheet";
 
 const BASE_COMMENTS: Comment[] = [
@@ -61,10 +64,55 @@ export function CommunityDetail() {
   const { slug } = useParams();
   const navigate = useNavigate();
   const [notificationsActive, setNotificationsActive] = useState(true);
+  const [communityMeta, setCommunityMeta] = useState<any | null>(null);
+  const [communityPosts, setCommunityPosts] = useState<PostData[]>([]);
 
-  const community = slug ? COMMUNITY_DATA[slug] : null;
+  useEffect(() => {
+    (async () => {
+      if (!slug) {
+        setCommunityMeta(null);
+        setCommunityPosts([]);
+        return;
+      }
 
-  if (!community) {
+      const community = await comunidadesService.obtenerPorSlug(slug);
+      const fallback = COMMUNITY_DATA[slug];
+      setCommunityMeta(community ?? fallback ?? null);
+
+      const local = loadPosts().filter((post) => {
+        const name = community?.nombre ?? fallback?.name;
+        return post.community?.toLowerCase() === name?.toLowerCase();
+      });
+
+      try {
+        const server = await publicacionesService.obtenerPorComunidadPorSlug(slug);
+        const mapped = server.map((p) => ({
+          id: p.id as any,
+          author: p.autor?.nombre ?? "",
+          username: p.autor ? `@${p.autor.username}` : "",
+          time: p.created_at ?? "",
+          createdAt: p.created_at,
+          content: p.contenido,
+          community: p.comunidad?.nombre ?? community?.nombre ?? fallback?.name ?? null,
+          initialReactions: p.reacciones?.length ?? 0,
+          initialComments: [],
+        }));
+
+        const seen = new Set<string | number>();
+        const merged = [...mapped, ...local].filter((m) => {
+          if (seen.has(String(m.id))) return false;
+          seen.add(String(m.id));
+          return true;
+        });
+        setCommunityPosts(sortPostsByNewest(merged));
+      } catch (err) {
+        setCommunityPosts(sortPostsByNewest(local));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
+
+  if (!communityMeta) {
     return (
       <div className="min-h-full max-w-md mx-auto flex items-center justify-center p-6">
         <div className="text-center">
@@ -80,7 +128,7 @@ export function CommunityDetail() {
     );
   }
 
-  const gradient = COLOR_CLASSES[community.color] ?? "from-gray-400 to-gray-600";
+  const gradient = COLOR_CLASSES[communityMeta.color] ?? "from-gray-400 to-gray-600";
 
   return (
     <div className="min-h-full max-w-md mx-auto">
@@ -95,11 +143,11 @@ export function CommunityDetail() {
         </div>
 
         <div className="mb-4">
-          <h1 className="text-white mb-1">{community.name}</h1>
-          <p className="text-white/90 text-sm mb-2">{community.description}</p>
+          <h1 className="text-white mb-1">{communityMeta.nombre ?? communityMeta.name}</h1>
+          <p className="text-white/90 text-sm mb-2">{communityMeta.descripcion ?? communityMeta.description}</p>
           <div className="flex items-center gap-2 text-white/80 text-sm">
             <Users className="w-4 h-4" />
-            <span>{community.members} miembros</span>
+            <span>{communityMeta.miembros_count ?? communityMeta.members} miembros</span>
           </div>
         </div>
 
@@ -125,12 +173,12 @@ export function CommunityDetail() {
         </p>
       </div>
 
-      {community.posts.length === 0 ? (
+      {communityPosts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
           <PlusCircle className="w-14 h-14 text-gray-300 mb-5" strokeWidth={1.2} />
           <h3 className="mb-2">Todavía no hay publicaciones</h3>
           <p className="text-gray-500 text-sm mb-6">
-            ¡Sé el primero en compartir algo en {community.name}!
+            ¡Sé el primero en compartir algo en {communityMeta.nombre ?? communityMeta.name}!
           </p>
           <button
             onClick={() => navigate("/create")}
@@ -142,13 +190,13 @@ export function CommunityDetail() {
       ) : (
         <>
           <div className="divide-y divide-gray-100">
-            {community.posts.map((post) => (
+            {communityPosts.map((post) => (
               <PostCard key={post.id} post={post} showCommunityTag={false} />
             ))}
           </div>
 
           <div className="bg-gradient-to-r from-blue-50 to-emerald-50 p-5 m-4 rounded-2xl text-center">
-            <p className="text-gray-700 mb-1">✨ Estás al día con {community.name}</p>
+            <p className="text-gray-700 mb-1">✨ Estás al día con {communityMeta.nombre ?? communityMeta.name}</p>
             <p className="text-gray-500 text-sm">Vuelve más tarde para ver nuevo contenido</p>
           </div>
         </>

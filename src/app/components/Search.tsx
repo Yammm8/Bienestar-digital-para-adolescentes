@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Search as SearchIcon, User, Users, UserPlus, UserCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useWellbeing } from "../contexts/WellbeingContext";
-import { MOCK_USERS } from "../data/mockUsers";
+import { useSearchUsers } from "../../hooks/useUsers";
+import { useSearchCommunities } from "../../hooks/useCommunities";
 
 const ALL_COMMUNITIES = [
   { name: "Mindfulness", members: 234, description: "Prácticas de atención plena y vida consciente", color: "emerald" },
@@ -29,19 +30,11 @@ export function Search() {
   const [tab, setTab] = useState<"users" | "communities">("users");
 
   const q = query.toLowerCase().trim();
+  const { users: filteredUsers, loading: loadingUsers } = useSearchUsers(query);
+  const { comunidades: filteredCommunities, loading: loadingCommunities } = useSearchCommunities(query, tab === "communities");
 
-  const filteredUsers = q
-    ? MOCK_USERS.filter(
-        (u) => u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q)
-      )
-    : MOCK_USERS;
-
-  const filteredCommunities = q
-    ? ALL_COMMUNITIES.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.description.toLowerCase().includes(q)
-      )
+  const displayedCommunities = q
+    ? filteredCommunities
     : ALL_COMMUNITIES;
 
   return (
@@ -90,7 +83,9 @@ export function Search() {
         {/* Users tab */}
         {tab === "users" && (
           <div className="space-y-3">
-            {filteredUsers.length === 0 ? (
+            {loadingUsers ? (
+              <div className="py-16 text-center text-sm text-gray-500">Buscando usuarios...</div>
+            ) : filteredUsers.length === 0 ? (
               <EmptyResults query={query} type="usuarios" />
             ) : (
               filteredUsers.map((user) => {
@@ -111,9 +106,9 @@ export function Search() {
                       onClick={() => navigate(`/users/${user.username}`)}
                       className="flex-1 text-left min-w-0"
                     >
-                      <p className="text-sm text-gray-900">{user.name}</p>
+                      <p className="text-sm text-gray-900">{user.nombre}</p>
                       <p className="text-xs text-gray-500">@{user.username}</p>
-                      <p className="text-xs text-gray-400 truncate mt-0.5">{user.bio}</p>
+                      <p className="text-xs text-gray-400 truncate mt-0.5">{user.bio ?? 'Perfil sin biografía'}</p>
                     </button>
 
                     <button
@@ -143,16 +138,21 @@ export function Search() {
         {/* Communities tab */}
         {tab === "communities" && (
           <div className="space-y-3">
-            {filteredCommunities.length === 0 ? (
+            {loadingCommunities ? (
+              <div className="py-16 text-center text-sm text-gray-500">Buscando comunidades...</div>
+            ) : displayedCommunities.length === 0 ? (
               <EmptyResults query={query} type="comunidades" />
             ) : (
-              filteredCommunities.map((community) => {
-                const slug = community.name.toLowerCase().replace(/\s+/g, "-");
-                const isMember = joinedCommunities.includes(community.name);
-                const colorClass = COMMUNITY_COLORS[community.color] ?? "bg-gray-100 text-gray-700";
+              displayedCommunities.map((community) => {
+                const name = (community as any).nombre ?? community.name;
+                const description = (community as any).descripcion ?? community.description;
+                const slug = (community as any).slug ?? name.toLowerCase().replace(/\s+/g, "-");
+                const color = (community as any).color ?? (community as any).color;
+                const isMember = joinedCommunities.includes(name);
+                const colorClass = COMMUNITY_COLORS[color] ?? "bg-gray-100 text-gray-700";
                 return (
                   <div
-                    key={community.name}
+                    key={slug}
                     className="bg-white rounded-2xl p-4 shadow-sm"
                   >
                     <div className="flex items-start gap-3">
@@ -168,17 +168,17 @@ export function Search() {
                           onClick={() => navigate(`/communities/${slug}`)}
                           className="text-left w-full"
                         >
-                          <p className="text-sm text-gray-900">{community.name}</p>
-                          <p className="text-xs text-gray-500">{community.members} miembros</p>
-                          <p className="text-xs text-gray-400 mt-0.5">{community.description}</p>
+                          <p className="text-sm text-gray-900">{name}</p>
+                          <p className="text-xs text-gray-500">{(community as any).miembros_count ?? `${(community as any).members ?? 0} miembros`}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{description}</p>
                         </button>
                       </div>
 
                       <button
                         onClick={() =>
                           isMember
-                            ? leaveCommunity(community.name)
-                            : joinCommunity(community.name)
+                            ? leaveCommunity(name)
+                            : joinCommunity(name)
                         }
                         className={`px-3 py-1.5 rounded-xl text-sm flex-shrink-0 transition-colors ${
                           isMember
