@@ -2,7 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { MessageCircle, MoreHorizontal, User, Send } from "lucide-react";
 import { useNavigate } from "react-router";
 import { ReactionsPopup, ReactionId, REACTIONS } from "./ReactionsPopup";
-import type { Comment } from "./CommentsSheet";
+import { publicacionesService } from "../../services/publications";
+import { useAuth } from "../contexts/AuthContext";
+import type { ComentarioConAutor } from "../../types/database";
 
 export interface PostData {
   id: string | number;
@@ -14,8 +16,19 @@ export interface PostData {
   createdAt?: string;
   remoteId?: string;
   synced?: boolean;
+  // Ahora el count viene del server; las reacciones vivas se cargan on demand
   initialReactions: number;
+  // Dejamos este campo por compatibilidad con mock pero ya no lo usamos para posts reales
   initialComments: Comment[];
+}
+
+// Tipo local para comentarios en UI (compatible con ComentarioConAutor del server)
+export interface Comment {
+  id: string | number;
+  author: string;
+  username: string;
+  content: string;
+  time: string;
 }
 
 interface PostCardProps {
@@ -26,8 +39,10 @@ interface PostCardProps {
 const MAX_COMMENT = 300;
 
 function formatPostTime(post: PostData) {
-  if (post.createdAt) {
-    const diff = Date.now() - Date.parse(post.createdAt);
+  // Preferir createdAt (ISO) sobre el campo time
+  const iso = post.createdAt ?? post.time;
+  if (iso) {
+    const diff = Date.now() - Date.parse(iso);
     if (!Number.isNaN(diff) && diff >= 0) {
       const minutes = Math.floor(diff / 60000);
       if (minutes < 1) return "Ahora";
@@ -41,18 +56,61 @@ function formatPostTime(post: PostData) {
   return post.time;
 }
 
+// Posts mock (numéricos) no tienen UUID real en Supabase
+function isRemotePost(post: PostData): boolean {
+  return typeof post.id === "string" && post.id.includes("-");
+}
+
+function mapServerComment(c: ComentarioConAutor): Comment {
+  return {
+    id: c.id,
+    author: c.autor?.nombre ?? "Usuario",
+    username: c.autor ? `@${c.autor.username}` : "@usuario",
+    content: c.contenido,
+    time: c.created_at,
+  };
+}
+
 export function PostCard({ post, showCommunityTag = true }: PostCardProps) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
   const [showReactions, setShowReactions] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [myReaction, setMyReaction] = useState<ReactionId | null>(null);
   const [totalReactions, setTotalReactions] = useState(post.initialReactions);
-  const [comments, setComments] = useState<Comment[]>(post.initialComments);
+  const [comments, setComments] = useState<Comment[]>(post.initialComments ?? []);
+  const [commentsLoaded, setCommentsLoaded] = useState(false);
   const [text, setText] = useState("");
+  const [sendingComment, setSendingComment] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const activeReaction = myReaction ? REACTIONS.find((r) => r.id === myReaction) : null;
-  const canSend = text.trim().length > 0 && text.length <= MAX_COMMENT;
+  const canSend = text.trim().length > 0 && text.length <= MAX_COMMENT && !sendingComment;
+  const postIsRemote = isRemotePost(post);
+  const postId = String(post.id);
+
+  // Cargar reacción propia del usuario autenticado al montar
+  useEffect(() => {
+    if (!postIsRemote || !user?.id) return;
+    publicacionesService.obtenerReacciones(postId).then((resumen) => {
+      const total = resumen.reduce((acc, r) => acc + r.count, 0);
+      setTotalReactions(total);
+      const mia = resumen.find((r) => r.usuarios.includes(user.id));
+      if (mia) setMyReaction(mia.tipo as ReactionId);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postId, user?.id]);
+
+  // Cargar comentarios cuando se abre el panel, solo la primera vez
+  useEffect(() => {
+    if (!showComments || commentsLoaded || !postIsRemote) return;
+    publicacionesService.obtenerComentarios(postId).then((serverComments) => {
+      setComments(serverComments.map(mapServerComment));
+      setCommentsLoaded(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showComments]);
 
   useEffect(() => {
     if (showComments) {
@@ -60,25 +118,65 @@ export function PostCard({ post, showCommunityTag = true }: PostCardProps) {
     }
   }, [showComments]);
 
-  const handleSelectReaction = (reaction: ReactionId | null) => {
+  const handleSelectReaction = async (reaction: ReactionId | null) => {
+    if (!user?.id) return;
+
     const hadReaction = myReaction !== null;
     const hasReaction = reaction !== null;
+
+    // Optimistic update
     setMyReaction(reaction);
     if (!hadReaction && hasReaction) setTotalReactions((n) => n + 1);
     if (hadReaction && !hasReaction) setTotalReactions((n) => n - 1);
+
+    if (!postIsRemote) return;
+
+    if (hadReaction && hasReaction && reaction !== myReaction) {
+      await publicacionesService.cambiarReaccion(postId, user.id, myReaction!, reaction);
+    } else if (hadReaction && !hasReaction) {
+      await publicacionesService.eliminarReaccion(postId, user.id, myReaction!);
+    } else if (!hadReaction && hasReaction) {
+      await publicacionesService.agregarReaccion(postId, user.id, reaction);
+    }
   };
 
-  const handleSubmitComment = () => {
+  const handleSubmitComment = async () => {
     if (!canSend) return;
-    const newComment: Comment = {
-      id: Date.now(),
-      author: "María García",
-      username: "@maria",
-      content: text.trim(),
-      time: "Ahora",
-    };
-    setComments((prev) => [...prev, newComment]);
+
+    const content = text.trim();
     setText("");
+
+    // Optimistic insert con datos del usuario real (tipo Usuario de DB)
+    const optimisticComment: Comment = {
+      id: Date.now(),
+      author: user?.nombre ?? "Tú",
+      username: user?.username ? `@${user.username}` : "@tú",
+      content,
+      time: new Date().toISOString(),
+    };
+    setComments((prev) => [...prev, optimisticComment]);
+
+    if (!postIsRemote || !user?.id) return; // mock: solo local
+
+    setSendingComment(true);
+    try {
+      const saved = await publicacionesService.crearComentario(postId, user.id, content);
+      if (saved) {
+        // Reemplazar el optimista con el real del server
+        const serverComment = await publicacionesService
+          .obtenerComentarios(postId)
+          .then((all) => all.find((c) => c.id === saved.id));
+        if (serverComment) {
+          setComments((prev) =>
+            prev.map((c) =>
+              c.id === optimisticComment.id ? mapServerComment(serverComment) : c
+            )
+          );
+        }
+      }
+    } finally {
+      setSendingComment(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -184,7 +282,7 @@ export function PostCard({ post, showCommunityTag = true }: PostCardProps) {
                     <div className="bg-white rounded-2xl rounded-tl-sm px-3 py-2 shadow-sm">
                       <div className="flex items-baseline gap-1.5 mb-0.5">
                         <span className="text-xs text-gray-800">{c.author}</span>
-                        <span className="text-xs text-gray-400">{c.time}</span>
+                        <span className="text-xs text-gray-400">{formatPostTime({ time: c.time, id: c.id, author: "", username: "", content: "", initialReactions: 0, initialComments: [] })}</span>
                       </div>
                       <p className="text-sm text-gray-700 leading-snug">{c.content}</p>
                     </div>

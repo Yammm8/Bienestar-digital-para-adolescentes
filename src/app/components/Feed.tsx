@@ -14,31 +14,44 @@ export function Feed() {
   const { publicaciones: serverPosts, loading } = useFeedGeneral();
   const [visiblePosts, setVisiblePosts] = useState<PostData[]>([]);
 
-  // Build visible posts depending on filter: combine local + server
   useEffect(() => {
     const local = loadPosts();
 
     if (filterType === "all") {
-      // show server general posts (mapped) + local general posts
       const serverMapped = (serverPosts ?? []).map((p) => ({
         id: p.id as any,
         author: p.autor?.nombre ?? "",
         username: p.autor ? `@${p.autor.username}` : "",
+        // Guardar el ISO en createdAt para que formatPostTime lo procese bien
+        createdAt: p.created_at ?? undefined,
+        // time queda como fallback legible si created_at falla
         time: p.created_at ?? "",
         content: p.contenido,
-        community: null,
-        initialReactions: p.reacciones?.length ?? 0,
+        community: p.comunidad?.nombre ?? null,
+        initialReactions: p.reacciones?.reduce((acc, r) => acc + r.count, 0) ?? 0,
         initialComments: [],
       }));
       const localGeneral = local.filter((p) => !p.community);
-      setVisiblePosts([...localGeneral, ...serverMapped]);
+
+      // Juntar, deduplicar por id, y ordenar cronológicamente
+      const merged = [...localGeneral, ...serverMapped];
+      const seen = new Set<string | number>();
+      const dedup = merged.filter((p) => {
+        if (seen.has(String(p.id))) return false;
+        seen.add(String(p.id));
+        return true;
+      });
+      setVisiblePosts(sortPostsByNewest(dedup));
       return;
     }
 
-    // communities: fetch posts from joined communities (server + local)
+    // communities: fetch posts de comunidades unidas
     (async () => {
-      const localCommunity = local.filter((p) => p.community && joinedCommunities.includes(p.community));
+      const localCommunity = local.filter(
+        (p) => p.community && joinedCommunities.includes(p.community)
+      );
       const serverAccum: PostData[] = [];
+
       await Promise.all(
         joinedCommunities.map(async (slug) => {
           try {
@@ -48,10 +61,11 @@ export function Feed() {
                 id: p.id as any,
                 author: p.autor?.nombre ?? "",
                 username: p.autor ? `@${p.autor.username}` : "",
+                createdAt: p.created_at ?? undefined,
                 time: p.created_at ?? "",
                 content: p.contenido,
                 community: p.comunidad?.nombre ?? slug,
-                initialReactions: p.reacciones?.length ?? 0,
+                initialReactions: p.reacciones?.reduce((acc, r) => acc + r.count, 0) ?? 0,
                 initialComments: [],
               })
             );
@@ -61,7 +75,6 @@ export function Feed() {
         })
       );
 
-      // merge, dedupe by id
       const merged = [...localCommunity, ...serverAccum];
       const seen = new Set<string | number>();
       const dedup = merged.filter((m) => {
@@ -69,7 +82,7 @@ export function Feed() {
         seen.add(String(m.id));
         return true;
       });
-      setVisiblePosts(dedup);
+      setVisiblePosts(sortPostsByNewest(dedup));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterType, serverPosts, joinedCommunities]);
